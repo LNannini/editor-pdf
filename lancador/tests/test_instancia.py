@@ -28,8 +28,7 @@ def test_registro_velho_de_porta_fechada_nao_encaminha(tmp_path):
 
 
 def test_editor_sem_janela_recusa_e_se_encerra(app, servidor, pdf):
-    app.modo_pulso = True
-    app.ultimo_pulso = time.monotonic() - 1000
+    app.ja_conectou = True
     instancia.registrar(app.dados, servidor.porta, SEGREDO)
     assert instancia.encaminhar_se_aberto(app.dados, [pdf]) is False
     assert app.encerrar.is_set()

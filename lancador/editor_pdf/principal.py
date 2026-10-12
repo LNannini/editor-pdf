@@ -9,22 +9,22 @@ from pathlib import Path
 
 from . import dialogos, instancia, janela
 from .arquivos import limpar_antigos
-from .config import CARENCIA_INICIAL, DIAS_VERSOES, LIMITE_SEM_PULSO, RAIZ_WEB, SAIDA_CEDO, pasta_dados
+from .config import CARENCIA_INICIAL, DIAS_VERSOES, GRACA_RECARGA, RAIZ_WEB, pasta_dados
 from .servidor import Aplicacao, ServidorEditor
 
 
-def deve_encerrar(agora: float, inicio: float, ultimo_pulso: float, janela_viva: bool, modo_pulso: bool) -> bool:
-    """Decide se o lançador sai.
+def deve_encerrar(agora: float, inicio: float, conexoes: int, ja_conectou: bool, ultima_queda: float | None) -> bool:
+    """Decide se o lançador sai, olhando só para a conexão /api/vivo da página.
 
-    Com o processo do Edge vivo, nunca: janela minimizada atrasa os sinais da página, e isso não é fechamento.
-    Se o Edge saiu depois de abrir a janela normalmente, a janela fechou. Se saiu logo no começo (modo pulso),
-    o Edge entregou a janela a outro processo, e só o silêncio da página indica que ela fechou.
+    O processo do Edge não serve de sinal: ele sai sozinho alguns segundos depois de abrir a janela.
+    Enquanto houver página conectada, o lançador fica. Se nenhuma conectou na carência, a janela não abriu.
+    Se a última caiu e nenhuma voltou dentro da graça (o tempo de uma recarga), a janela fechou.
     """
-    if janela_viva:
+    if conexoes > 0:
         return False
-    if not modo_pulso:
-        return True
-    return agora - inicio > CARENCIA_INICIAL and agora - ultimo_pulso > LIMITE_SEM_PULSO
+    if not ja_conectou:
+        return agora - inicio > CARENCIA_INICIAL
+    return ultima_queda is not None and agora - ultima_queda > GRACA_RECARGA
 
 
 def main(argv: list[str]) -> int:
@@ -54,22 +54,15 @@ def main(argv: list[str]) -> int:
     servidor = ServidorEditor(app)
     threading.Thread(target=servidor.serve_forever, daemon=True).start()
     instancia.registrar(dados, servidor.porta, app.segredo)
-    inicio = time.monotonic()
-    processo = janela.abrir_janela(edge, f"http://127.0.0.1:{servidor.porta}/", dados / "perfil-edge")
-    saida_do_edge: float | None = None
+    janela.abrir_janela(edge, f"http://127.0.0.1:{servidor.porta}/", dados / "perfil-edge")
     try:
         while not app.encerrar.is_set():
             time.sleep(1)
-            agora = time.monotonic()
-            if saida_do_edge is None and processo.poll() is not None:
-                saida_do_edge = agora
-                app.modo_pulso = saida_do_edge - inicio < SAIDA_CEDO
-            if deve_encerrar(agora, inicio, app.ultimo_pulso, saida_do_edge is None, app.modo_pulso):
+            if deve_encerrar(time.monotonic(), app.inicio, app.conexoes, app.ja_conectou, app.ultima_queda):
                 break
     finally:
+        app.encerrar.set()  # solta a conexão /api/vivo que ainda estiver presa
         instancia.remover(dados)
         servidor.shutdown()
         servidor.server_close()
-        if processo.poll() is None:
-            processo.terminate()
     return 0

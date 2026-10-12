@@ -1,22 +1,26 @@
 from __future__ import annotations
 
-from editor_pdf.config import CARENCIA_INICIAL, LIMITE_SEM_PULSO
+from editor_pdf.config import CARENCIA_INICIAL, GRACA_RECARGA
 from editor_pdf.principal import deve_encerrar
 
 INICIO = 1000.0
 
 
-def test_nunca_encerra_com_a_janela_viva():
-    assert deve_encerrar(INICIO + 10_000, INICIO, INICIO, janela_viva=True, modo_pulso=False) is False
+def test_nunca_encerra_com_a_pagina_conectada():
+    # O processo do Edge sai sozinho alguns segundos depois de abrir; o que vale é a conexão da página.
+    assert deve_encerrar(INICIO + 10_000, INICIO, conexoes=1, ja_conectou=True, ultima_queda=None) is False
 
 
-def test_encerra_quando_a_janela_fecha_normalmente():
-    assert deve_encerrar(INICIO + 300, INICIO, INICIO + 295, janela_viva=False, modo_pulso=False) is True
+def test_espera_a_janela_abrir_durante_a_carencia():
+    assert deve_encerrar(INICIO + CARENCIA_INICIAL - 1, INICIO, conexoes=0, ja_conectou=False, ultima_queda=None) is False
+    assert deve_encerrar(INICIO + CARENCIA_INICIAL + 1, INICIO, conexoes=0, ja_conectou=False, ultima_queda=None) is True
 
 
-def test_em_modo_pulso_espera_a_carencia_e_o_silencio():
-    agora = INICIO + CARENCIA_INICIAL - 1
-    assert deve_encerrar(agora, INICIO, INICIO - 500, janela_viva=False, modo_pulso=True) is False
-    agora = INICIO + CARENCIA_INICIAL + 1
-    assert deve_encerrar(agora, INICIO, agora - 5, janela_viva=False, modo_pulso=True) is False
-    assert deve_encerrar(agora, INICIO, agora - LIMITE_SEM_PULSO - 1, janela_viva=False, modo_pulso=True) is True
+def test_recarregar_a_pagina_nao_encerra():
+    queda = INICIO + 100
+    assert deve_encerrar(queda + GRACA_RECARGA - 1, INICIO, conexoes=0, ja_conectou=True, ultima_queda=queda) is False
+
+
+def test_encerra_quando_a_janela_fecha():
+    queda = INICIO + 100
+    assert deve_encerrar(queda + GRACA_RECARGA + 1, INICIO, conexoes=0, ja_conectou=True, ultima_queda=queda) is True

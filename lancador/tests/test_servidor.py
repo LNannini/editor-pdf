@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import socket
+import struct
 import time
 
 from conftest import SEGREDO
@@ -72,14 +74,36 @@ def test_abrir_externo_aceita_so_arquivos_que_existem(chamar, app, pdf, tmp_path
 
 
 def test_abrir_externo_sem_janela_pede_encerramento(chamar, app, pdf):
-    app.modo_pulso = True
-    app.ultimo_pulso = time.monotonic() - 1000
+    app.ja_conectou = True  # a página já esteve aberta e não há mais nenhuma conectada
     corpo = json.dumps({"caminhos": [str(pdf)]}).encode("utf-8")
     assert chamar("POST", "/api/abrir-externo", corpo)[0] == 410
     assert app.encerrar.is_set()
 
 
-def test_pulso_atualiza_o_ultimo_sinal(chamar, app):
-    app.ultimo_pulso = 0.0
-    assert chamar("POST", "/api/pulso")[0] == 204
-    assert app.ultimo_pulso > 0.0
+def _aguardar(condicao, segundos=3.0) -> bool:
+    fim = time.monotonic() + segundos
+    while time.monotonic() < fim:
+        if condicao():
+            return True
+        time.sleep(0.05)
+    return condicao()
+
+
+def test_conexao_vivo_conta_a_pagina_aberta_e_percebe_o_fechamento(servidor, app):
+    conexao = socket.create_connection(("127.0.0.1", servidor.porta))
+    pedido = f"GET /api/vivo HTTP/1.1\r\nHost: 127.0.0.1:{servidor.porta}\r\nX-Editor-Segredo: {SEGREDO}\r\n\r\n"
+    conexao.sendall(pedido.encode("ascii"))
+    assert conexao.recv(1024).startswith(b"HTTP/1.1 200")
+    assert _aguardar(lambda: app.conexoes == 1)
+    assert app.ja_conectou is True
+    conexao.close()
+    assert _aguardar(lambda: app.conexoes == 0)
+    assert app.ultima_queda is not None
+
+
+def test_conexao_resetada_pelo_cliente_nao_suja_o_console(servidor, capsys):
+    conexao = socket.create_connection(("127.0.0.1", servidor.porta))
+    conexao.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack("ii", 1, 0))
+    conexao.close()  # fecha com RST, como o Edge faz com conexões abertas por antecipação
+    time.sleep(0.3)
+    assert "Traceback" not in capsys.readouterr().err

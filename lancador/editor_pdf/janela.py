@@ -17,7 +17,8 @@ def localizar_edge() -> Path | None:
 
 
 def comando_janela(edge: Path, url: str, perfil: Path) -> list[str]:
-    # Perfil próprio: a janela não se mistura com o Edge do dia a dia, e o processo termina quando ela fecha.
+    # Perfil próprio: a janela não se mistura com o Edge do dia a dia. O processo iniciado aqui sai sozinho
+    # alguns segundos depois e entrega a janela a outro; quem diz se ela continua aberta é a conexão /api/vivo.
     return [
         str(edge),
         f"--app={url}",
