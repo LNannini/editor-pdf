@@ -17,7 +17,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Callable
 from urllib.parse import unquote, urlsplit
+from datetime import datetime
 
+from .arquivos import ArquivoEmUso, caminho_livre, nome_seguro, salvar_atomico
 from .config import CABECALHO_SEGREDO, LIMITE_SEM_PULSO
 from .estado import FilaPendentes, Recentes, RegistroArquivos
 
@@ -35,6 +37,7 @@ TIPOS = {
     ".webmanifest": "application/manifest+json",
 }
 LIMITE_CORPO = 1024 * 1024 * 1024
+CHAVE_RASCUNHO = re.compile(r"[A-Za-z0-9_-]{1,64}")
 
 
 @dataclass
@@ -95,6 +98,7 @@ class Manipulador(BaseHTTPRequestHandler):
     # ---------------------------------------------------------------- despacho
 
     def _despachar(self, metodo: str) -> None:
+        self._corpo_lido = False
         app = self.server.app
         porta = self.server.porta
         if self.headers.get("Host", "") not in (f"127.0.0.1:{porta}", f"localhost:{porta}"):
@@ -116,6 +120,8 @@ class Manipulador(BaseHTTPRequestHandler):
             if achado and metodo_rota == metodo:
                 try:
                     getattr(self, nome)(*(unquote(g) for g in achado.groups()))
+                except ArquivoEmUso as erro:
+                    self._json(HTTPStatus.CONFLICT, {"erro": str(erro)})
                 except ValueError as erro:
                     self._json(HTTPStatus.BAD_REQUEST, {"erro": str(erro)})
                 return
@@ -127,9 +133,29 @@ class Manipulador(BaseHTTPRequestHandler):
         tamanho = int(self.headers.get("Content-Length") or 0)
         if tamanho < 0 or tamanho > LIMITE_CORPO:
             raise ValueError("Arquivo grande demais.")
+        self._corpo_lido = True
         return self.rfile.read(tamanho)
 
+    def _descartar_corpo(self) -> None:
+        """Lê e joga fora o corpo não lido. Sem isso, o Windows derruba a conexão e a resposta de erro se perde."""
+        if self._corpo_lido:
+            return
+        self._corpo_lido = True
+        try:
+            restante = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return
+        if restante > LIMITE_CORPO:
+            return
+        while restante > 0:
+            pedaco = self.rfile.read(min(restante, 64 * 1024))
+            if not pedaco:
+                return
+            restante -= len(pedaco)
+
     def _enviar(self, status: HTTPStatus, corpo: bytes, tipo: str) -> None:
+        if status >= 400:
+            self._descartar_corpo()
         self.send_response(status)
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
@@ -206,6 +232,116 @@ class Manipulador(BaseHTTPRequestHandler):
         app.recentes.adicionar(caminho)
         self._bytes(dados)
 
+    def _api_salvar_arquivo(self, ident: str) -> None:
+        app = self.server.app
+        caminho = app.registro.caminho(ident)
+        if caminho is None:
+            self._texto(HTTPStatus.NOT_FOUND, "Arquivo não encontrado.")
+            return
+        salvar_atomico(caminho, self._corpo(), app.dados / "versoes")
+        self._vazio()
+
+    def _api_salvar_como(self) -> None:
+        app = self.server.app
+        dados = self._corpo()
+        sugerido = unquote(self.headers.get("X-Nome-Sugerido", "documento"))
+        destino = app.escolher_destino(sugerido)
+        if destino is None:
+            self._vazio()
+            return
+        salvar_atomico(destino, dados, app.dados / "versoes")
+        app.recentes.adicionar(destino)
+        self._json(HTTPStatus.OK, app.descrever(destino))
+
+    def _api_dialogo_pasta(self) -> None:
+        app = self.server.app
+        pasta = app.escolher_pasta()
+        if pasta is None:
+            self._vazio()
+            return
+        self._json(HTTPStatus.OK, {"id": app.pastas.registrar(pasta), "nome": pasta.name, "pasta": str(pasta)})
+
+    def _api_salvar_na_pasta(self, ident: str, nome: str) -> None:
+        app = self.server.app
+        pasta = app.pastas.caminho(ident)
+        if pasta is None or not pasta.is_dir():
+            self._texto(HTTPStatus.NOT_FOUND, "Pasta não encontrada.")
+            return
+        destino = caminho_livre(pasta, nome_seguro(nome))
+        salvar_atomico(destino, self._corpo())
+        self._json(HTTPStatus.OK, {"nome": destino.name})
+
+    def _api_imprimir(self) -> None:
+        app = self.server.app
+        pasta = app.dados / "impressao"
+        pasta.mkdir(parents=True, exist_ok=True)
+        destino = caminho_livre(pasta, f"impressao {datetime.now():%Y-%m-%d_%H-%M-%S}.pdf")
+        salvar_atomico(destino, self._corpo())
+        app.abrir_para_imprimir(destino)
+        self._vazio()
+
+    def _api_recentes(self) -> None:
+        app = self.server.app
+        self._json(HTTPStatus.OK, [app.descrever(c) for c in app.recentes.listar()])
+
+    def _pasta_rascunhos(self) -> Path:
+        pasta = self.server.app.dados / "rascunhos"
+        pasta.mkdir(parents=True, exist_ok=True)
+        return pasta
+
+    @staticmethod
+    def _conferir_chave(chave: str) -> None:
+        if not CHAVE_RASCUNHO.fullmatch(chave):
+            raise ValueError("Chave de rascunho inválida.")
+
+    def _api_rascunhos(self) -> None:
+        pasta = self._pasta_rascunhos()
+        itens = []
+        for meta in pasta.glob("*.json"):
+            try:
+                info = json.loads(meta.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if (pasta / f"{meta.stem}.pdf").is_file():
+                itens.append({"chave": meta.stem, "nome": str(info.get("nome", "")), "modificado": str(info.get("modificado", ""))})
+        itens.sort(key=lambda item: item["modificado"], reverse=True)
+        self._json(HTTPStatus.OK, itens)
+
+    def _api_ler_rascunho(self, chave: str) -> None:
+        self._conferir_chave(chave)
+        arquivo = self._pasta_rascunhos() / f"{chave}.pdf"
+        if not arquivo.is_file():
+            self._texto(HTTPStatus.NOT_FOUND, "Rascunho não encontrado.")
+            return
+        self._bytes(arquivo.read_bytes())
+
+    def _api_guardar_rascunho(self, chave: str) -> None:
+        self._conferir_chave(chave)
+        pasta = self._pasta_rascunhos()
+        nome = unquote(self.headers.get("X-Nome-Arquivo", "documento.pdf"))
+        salvar_atomico(pasta / f"{chave}.pdf", self._corpo())
+        meta = {"nome": nome, "modificado": datetime.now().isoformat(timespec="seconds")}
+        (pasta / f"{chave}.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        self._vazio()
+
+    def _api_apagar_rascunho(self, chave: str) -> None:
+        self._conferir_chave(chave)
+        pasta = self._pasta_rascunhos()
+        (pasta / f"{chave}.pdf").unlink(missing_ok=True)
+        (pasta / f"{chave}.json").unlink(missing_ok=True)
+        self._vazio()
+
+    def _api_ler_assinatura(self) -> None:
+        arquivo = self.server.app.dados / "assinatura.png"
+        if not arquivo.is_file():
+            self._texto(HTTPStatus.NOT_FOUND, "Nenhuma assinatura cadastrada.")
+            return
+        self._bytes(arquivo.read_bytes(), "image/png")
+
+    def _api_guardar_assinatura(self) -> None:
+        salvar_atomico(self.server.app.dados / "assinatura.png", self._corpo())
+        self._vazio()
+
 
 ROTAS: list[tuple[str, re.Pattern[str], str]] = [
     (metodo, re.compile(padrao), nome)
@@ -215,5 +351,17 @@ ROTAS: list[tuple[str, re.Pattern[str], str]] = [
         ("POST", r"/api/pulso", "_api_pulso"),
         ("POST", r"/api/dialogo/abrir", "_api_dialogo_abrir"),
         ("GET", r"/api/arquivo/([^/]+)", "_api_ler_arquivo"),
+        ("PUT", r"/api/arquivo/([^/]+)", "_api_salvar_arquivo"),
+        ("POST", r"/api/salvar-como", "_api_salvar_como"),
+        ("POST", r"/api/dialogo/pasta", "_api_dialogo_pasta"),
+        ("PUT", r"/api/pasta/([^/]+)/([^/]+)", "_api_salvar_na_pasta"),
+        ("POST", r"/api/imprimir", "_api_imprimir"),
+        ("GET", r"/api/recentes", "_api_recentes"),
+        ("GET", r"/api/rascunhos", "_api_rascunhos"),
+        ("GET", r"/api/rascunho/([^/]+)", "_api_ler_rascunho"),
+        ("PUT", r"/api/rascunho/([^/]+)", "_api_guardar_rascunho"),
+        ("DELETE", r"/api/rascunho/([^/]+)", "_api_apagar_rascunho"),
+        ("GET", r"/api/assinatura-imagem", "_api_ler_assinatura"),
+        ("PUT", r"/api/assinatura-imagem", "_api_guardar_assinatura"),
     ]
 ]
