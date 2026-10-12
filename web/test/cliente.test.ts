@@ -10,6 +10,7 @@ function canalFalso(): CanalWorker {
   const servico = new ServicoMotor();
   const canal: CanalWorker = {
     onmessage: null,
+    onerror: null,
     postMessage({ id, pedido }) {
       queueMicrotask(() => {
         let resposta: Resposta;
@@ -41,6 +42,15 @@ describe("Motor", () => {
       motor.pedir({ tipo: "abrir", bytes: fabricarPdf({ paginas: 4 }) }),
     ]);
     expect([a.info.paginas, b.info.paginas]).toEqual([1, 4]);
+  });
+
+  it("se o worker quebrar, os pedidos pendentes e os seguintes falham com a causa, em vez de esperar para sempre", async () => {
+    const canal: CanalWorker = { onmessage: null, onerror: null, postMessage() {} };
+    const motor = new Motor(canal);
+    const pendente = motor.pedir({ tipo: "info", doc: "x" });
+    canal.onerror?.({ message: "o arquivo .wasm não carregou" });
+    await expect(pendente).rejects.toThrow("o arquivo .wasm não carregou");
+    await expect(motor.pedir({ tipo: "info", doc: "y" })).rejects.toThrow("o arquivo .wasm não carregou");
   });
 
   it("reconstrói os erros do motor", async () => {

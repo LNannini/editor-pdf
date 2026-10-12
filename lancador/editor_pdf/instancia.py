@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 
-from .config import CABECALHO_SEGREDO
+from .config import CABECALHO_SEGREDO, GRACA_RECARGA
 
 
 def _arquivo(dados: Path) -> Path:
@@ -23,10 +23,17 @@ def registrar(dados: Path, porta: int, segredo: str) -> None:
 
 
 def remover(dados: Path) -> None:
-    _arquivo(dados).unlink(missing_ok=True)
+    """Apaga o registro só se ele ainda for deste processo; um lançador novo pode já ter gravado o dele."""
+    try:
+        info = json.loads(_arquivo(dados).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    if isinstance(info, dict) and info.get("pid") == os.getpid():
+        _arquivo(dados).unlink(missing_ok=True)
 
 
-def encaminhar_se_aberto(dados: Path, caminhos: list[Path], espera: float = 2.0) -> bool:
+def encaminhar_se_aberto(dados: Path, caminhos: list[Path], espera: float = GRACA_RECARGA + 3.0) -> bool:
+    # A espera cobre a graça de recarga, durante a qual o editor aberto decide se a página volta.
     try:
         info = json.loads(_arquivo(dados).read_text(encoding="utf-8"))
         porta, segredo = int(info["porta"]), str(info["segredo"])

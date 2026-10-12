@@ -77,6 +77,16 @@ describe("PlataformaPc", () => {
     expect(await new PlataformaPc("s", buscar).imagemAssinatura()).toBeNull();
   });
 
+  it("erro do lançador com frase em JSON chega à página com a frase dele", async () => {
+    const { buscar } = fetchFalso({
+      "PUT /api/arquivo/x": () =>
+        new Response(JSON.stringify({ erro: "Não foi possível acessar o disco (pasta não encontrada)." }), { status: 500 }),
+    });
+    await expect(new PlataformaPc("s", buscar).salvar("x", new Uint8Array([1]))).rejects.toThrow(
+      "Não foi possível acessar o disco (pasta não encontrada).",
+    );
+  });
+
   it("outros erros do lançador viram Error com a rota", async () => {
     const { buscar } = fetchFalso({});
     await expect(new PlataformaPc("s", buscar).recentes()).rejects.toThrow("/api/recentes");

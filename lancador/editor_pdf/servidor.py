@@ -22,7 +22,7 @@ from urllib.parse import unquote, urlsplit
 from datetime import datetime
 
 from .arquivos import ArquivoEmUso, caminho_livre, nome_seguro, salvar_atomico
-from .config import CABECALHO_SEGREDO, CARENCIA_INICIAL
+from .config import CABECALHO_SEGREDO, CARENCIA_INICIAL, GRACA_RECARGA
 from .estado import FilaPendentes, Recentes, RegistroArquivos
 
 # Tipos fixos: no Windows o módulo mimetypes lê o registro e às vezes devolve text/plain para .js.
@@ -61,6 +61,7 @@ class Aplicacao:
     conexoes: int = 0
     ja_conectou: bool = False
     ultima_queda: float | None = None
+    graca_recarga: float = GRACA_RECARGA
     encerrar: threading.Event = field(default_factory=threading.Event)
     _trava: threading.Lock = field(default_factory=threading.Lock)
 
@@ -81,12 +82,24 @@ class Aplicacao:
             if self.conexoes == 0:
                 self.ultima_queda = time.monotonic()
 
-    def sem_janela(self, agora: float) -> bool:
-        """Não há página para receber arquivos: ela fechou, ou nunca abriu dentro da carência."""
-        with self._trava:
-            if self.conexoes > 0:
+    def janela_disponivel(self) -> bool:
+        """Diz se há página para receber arquivos.
+
+        Com página conectada, sim. Se nenhuma conectou ainda, sim enquanto durar a carência (a janela está abrindo).
+        Se a conexão acabou de cair, espera a graça de recarga: a página recarregada volta e recebe o arquivo; se não
+        voltar, a janela fechou e a resposta é não, para o lançador novo assumir em vez de o arquivo se perder.
+        """
+        while True:
+            agora = time.monotonic()
+            with self._trava:
+                if self.conexoes > 0:
+                    return True
+                if not self.ja_conectou:
+                    return agora - self.inicio <= CARENCIA_INICIAL
+                fim_da_graca = (self.ultima_queda if self.ultima_queda is not None else agora) + self.graca_recarga
+            if agora >= fim_da_graca:
                 return False
-            return self.ja_conectou or agora - self.inicio > CARENCIA_INICIAL
+            time.sleep(0.05)
 
 
 class ServidorEditor(ThreadingHTTPServer):
@@ -155,6 +168,10 @@ class Manipulador(BaseHTTPRequestHandler):
                     self._json(HTTPStatus.CONFLICT, {"erro": str(erro)})
                 except ValueError as erro:
                     self._json(HTTPStatus.BAD_REQUEST, {"erro": str(erro)})
+                except OSError as erro:
+                    # Pasta apagada, disco cheio, unidade desconectada: a página precisa de uma frase, não de conexão caída.
+                    detalhe = erro.strerror or str(erro)
+                    self._json(HTTPStatus.INTERNAL_SERVER_ERROR, {"erro": f"Não foi possível acessar o disco ({detalhe})."})
                 return
         self._texto(HTTPStatus.NOT_FOUND, "Rota desconhecida.")
 
@@ -190,6 +207,9 @@ class Manipulador(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Cache-Control", "no-store")
         self.send_header("X-Content-Type-Options", "nosniff")
+        # Outro site não pode embutir o editor numa moldura: a página carregaria com o segredo e aceitaria cliques.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         if status >= 400:
             # Em erro o corpo do pedido pode não ter sido lido; fechar a conexão evita ler lixo depois.
             self.send_header("Connection", "close")
@@ -236,7 +256,7 @@ class Manipulador(BaseHTTPRequestHandler):
 
     def _api_abrir_externo(self) -> None:
         app = self.server.app
-        if app.sem_janela(time.monotonic()):
+        if not app.janela_disponivel():
             # Não há janela para mostrar o arquivo; este lançador sai e o novo, que chamou, assume.
             app.encerrar.set()
             self._texto(HTTPStatus.GONE, "Sem janela aberta.")

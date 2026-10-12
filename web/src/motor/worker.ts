@@ -1,5 +1,5 @@
 // Ponto de entrada do Web Worker do motor. Só faz a ponte entre mensagens e o ServicoMotor.
-import type { Envelope, Resposta } from "./protocolo";
+import type { Envelope, ErroSerializado, Resposta } from "./protocolo";
 
 // O MuPDF.js procura o .wasm ao lado do próprio arquivo, mas depois do build do Vite esse caminho muda.
 // O pacote só exporta o ponto de entrada principal, então o .wasm é apontado por caminho relativo, que o
@@ -16,11 +16,18 @@ const escopo = self as unknown as EscopoWorker;
 const pronto = import("./servico").then((m) => ({ servico: new m.ServicoMotor(), serializarErro: m.serializarErro }));
 
 escopo.onmessage = async ({ data: { id, pedido } }) => {
-  const { servico, serializarErro } = await pronto;
   try {
+    const { servico } = await pronto;
     const { valor, transferir } = servico.tratar(pedido);
     escopo.postMessage({ id, ok: true, valor }, transferir);
   } catch (erro) {
-    escopo.postMessage({ id, ok: false, erro: serializarErro(erro) });
+    // Se o próprio motor não carregou, não há serializarErro; a resposta ainda precisa sair, senão a página espera para sempre.
+    let serializado: ErroSerializado;
+    try {
+      serializado = (await pronto).serializarErro(erro);
+    } catch {
+      serializado = { tipo: "interno", mensagem: `O motor de PDF não carregou: ${erro instanceof Error ? erro.message : String(erro)}` };
+    }
+    escopo.postMessage({ id, ok: false, erro: serializado });
   }
 };

@@ -33,7 +33,14 @@ export class PlataformaPc implements Plataforma {
     });
     if (resposta.status === 404 && opcoes.aceitar404) return null;
     if (resposta.status === 409) throw new ErroArquivoEmUso(((await resposta.json()) as { erro: string }).erro);
-    if (!resposta.ok) throw new Error(`O lançador respondeu ${resposta.status} em ${caminho}.`);
+    if (!resposta.ok) {
+      // Quando o lançador explica o erro numa frase, é ela que aparece na tela.
+      const frase = await resposta
+        .json()
+        .then((corpo: { erro?: unknown }) => (typeof corpo.erro === "string" ? corpo.erro : undefined))
+        .catch(() => undefined);
+      throw new Error(frase ?? `O lançador respondeu ${resposta.status} em ${caminho}.`);
+    }
     return resposta;
   }
 

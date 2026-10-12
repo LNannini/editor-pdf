@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 import socket
 import time
 
@@ -29,6 +31,7 @@ def test_registro_velho_de_porta_fechada_nao_encaminha(tmp_path):
 
 def test_editor_sem_janela_recusa_e_se_encerra(app, servidor, pdf):
     app.ja_conectou = True
+    app.ultima_queda = time.monotonic() - 100
     instancia.registrar(app.dados, servidor.porta, SEGREDO)
     assert instancia.encaminhar_se_aberto(app.dados, [pdf]) is False
     assert app.encerrar.is_set()
@@ -38,3 +41,11 @@ def test_remover(tmp_path):
     instancia.registrar(tmp_path, 1234, "x")
     instancia.remover(tmp_path)
     assert not (tmp_path / "instancia.json").exists()
+
+
+def test_remover_preserva_o_registro_do_lancador_novo(tmp_path):
+    # O lançador que está saindo não pode apagar o registro que um lançador novo acabou de gravar.
+    arquivo = tmp_path / "instancia.json"
+    arquivo.write_text(json.dumps({"porta": 4321, "segredo": "novo", "pid": os.getpid() + 1}), encoding="utf-8")
+    instancia.remover(tmp_path)
+    assert arquivo.exists()

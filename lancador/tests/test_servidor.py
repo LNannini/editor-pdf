@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import socket
 import struct
+import threading
 import time
 
 from conftest import SEGREDO
@@ -74,10 +75,38 @@ def test_abrir_externo_aceita_so_arquivos_que_existem(chamar, app, pdf, tmp_path
 
 
 def test_abrir_externo_sem_janela_pede_encerramento(chamar, app, pdf):
-    app.ja_conectou = True  # a página já esteve aberta e não há mais nenhuma conectada
+    app.ja_conectou = True  # a página já esteve aberta e fechou há muito tempo
+    app.ultima_queda = time.monotonic() - 100
     corpo = json.dumps({"caminhos": [str(pdf)]}).encode("utf-8")
     assert chamar("POST", "/api/abrir-externo", corpo)[0] == 410
     assert app.encerrar.is_set()
+
+
+def test_abrir_externo_durante_recarga_espera_a_pagina_voltar(chamar, app, pdf):
+    app.ja_conectou = True
+    app.ultima_queda = time.monotonic()  # a conexão acabou de cair: pode ser F5
+    app.graca_recarga = 2.0
+    threading.Timer(0.3, app.conexao_aberta).start()  # a página recarregada volta a conectar
+    corpo = json.dumps({"caminhos": [str(pdf)]}).encode("utf-8")
+    assert chamar("POST", "/api/abrir-externo", corpo)[0] == 204
+    assert not app.encerrar.is_set()
+    assert app.pendentes.retirar_todos() == [pdf]
+
+
+def test_abrir_externo_logo_depois_de_fechar_recusa_para_o_novo_assumir(chamar, app, pdf):
+    app.ja_conectou = True
+    app.ultima_queda = time.monotonic()  # a janela acabou de fechar e não volta
+    app.graca_recarga = 0.3
+    corpo = json.dumps({"caminhos": [str(pdf)]}).encode("utf-8")
+    assert chamar("POST", "/api/abrir-externo", corpo)[0] == 410
+    assert app.encerrar.is_set()
+    assert app.pendentes.retirar_todos() == []
+
+
+def test_respostas_proibem_o_editor_dentro_de_moldura_de_outro_site(chamar):
+    _, cabecalhos, _ = chamar("GET", "/", segredo=None)
+    assert cabecalhos["x-frame-options"] == "DENY"
+    assert "frame-ancestors 'none'" in cabecalhos["content-security-policy"]
 
 
 def _aguardar(condicao, segundos=3.0) -> bool:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 from pathlib import Path
 from urllib.parse import quote
@@ -89,6 +90,14 @@ def test_erro_com_pdf_grande_no_pedido_ainda_entrega_a_resposta(chamar):
     assert status == 404
     assert "não encontrado" in dados.decode("utf-8")
     assert chamar("PUT", "/api/arquivo/desconhecido", corpo, segredo="errado")[0] == 403
+
+
+def test_erro_de_disco_vira_mensagem_legivel(chamar, app, pdf):
+    ident = _id_de(chamar, app, pdf)
+    shutil.rmtree(pdf.parent)  # a pasta sumiu depois que o arquivo foi aberto
+    status, _, corpo = chamar("PUT", f"/api/arquivo/{ident}", b"%PDF novo")
+    assert status == 500
+    assert "Não foi possível acessar o disco" in json.loads(corpo)["erro"]
 
 
 def test_imprimir_grava_copia_temporaria_e_entrega(chamar, app, falsos):
