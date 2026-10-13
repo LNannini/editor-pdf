@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Editor PDF</title>
+    <style>
+      body { margin: 0; font-family: system-ui, sans-serif; background: #e8e8e8; }
+      header { position: sticky; top: 0; display: flex; gap: 8px; align-items: center; padding: 8px 12px; background: #fff; border-bottom: 1px solid #ccc; }
+      #paginas { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 16px; }
+      #paginas canvas { background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2); }
+    </style>
+  </head>
+  <body>
+    <header>
+      <button id="abrir">Abrir</button>
+      <button id="girar">Girar página 1</button>
+      <span id="estado">Nenhum arquivo aberto</span>
+    </header>
+    <main id="paginas"></main>
+    <script type="module" src="/src/prova/principal.ts"></script>
+  </body>
+</html>

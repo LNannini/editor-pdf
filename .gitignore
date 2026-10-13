@@ -1,0 +1,6 @@
+node_modules/
+web/dist/
+testes-reais/
+__pycache__/
+*.pyc
+.pytest_cache/
