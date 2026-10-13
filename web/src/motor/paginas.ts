@@ -130,13 +130,16 @@ export function cortarMargens(doc: mupdf.PDFDocument, paginas: number[], retangu
   operacao(doc, "Cortar margens", () => {
     for (const p of unicas) {
       const pagina = doc.loadPage(p);
-      const [bx0, by0, bx1, by1] = pagina.getBounds();
-      const limitado: Retangulo = [Math.max(bx0, x0), Math.max(by0, y0), Math.min(bx1, x1), Math.min(by1, y1)];
-      if (limitado[2] - limitado[0] < 10 || limitado[3] - limitado[1] < 10) {
-        throw new ErroDocumento(`A área de corte fica fora da página ${p + 1}.`);
+      try {
+        const [bx0, by0, bx1, by1] = pagina.getBounds();
+        const limitado: Retangulo = [Math.max(bx0, x0), Math.max(by0, y0), Math.min(bx1, x1), Math.min(by1, y1)];
+        if (limitado[2] - limitado[0] < 10 || limitado[3] - limitado[1] < 10) {
+          throw new ErroDocumento(`A área de corte fica fora da página ${p + 1}.`);
+        }
+        pagina.setPageBox("CropBox", limitado);
+      } finally {
+        pagina.destroy();
       }
-      pagina.setPageBox("CropBox", limitado);
-      pagina.destroy();
     }
   });
 }

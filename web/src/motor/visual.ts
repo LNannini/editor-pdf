@@ -10,8 +10,10 @@ function conferirPagina(doc: mupdf.PDFDocument, pagina: number): void {
 /** Desenha a página na escala pedida (1 equivale a 72 pontos por polegada) e devolve pixels RGBA prontos para um ImageData. */
 export function renderizarPagina(doc: mupdf.PDFDocument, pagina: number, escala: number): ImagemRgba {
   conferirPagina(doc, pagina);
-  const pix = doc.loadPage(pagina).toPixmap(mupdf.Matrix.scale(escala, escala), mupdf.ColorSpace.DeviceRGB, false, true);
+  const pg = doc.loadPage(pagina);
+  let pix: mupdf.Pixmap | undefined;
   try {
+    pix = pg.toPixmap(mupdf.Matrix.scale(escala, escala), mupdf.ColorSpace.DeviceRGB, false, true);
     const largura = pix.getWidth();
     const altura = pix.getHeight();
     const passo = pix.getStride();
@@ -30,7 +32,8 @@ export function renderizarPagina(doc: mupdf.PDFDocument, pagina: number, escala:
     }
     return { largura, altura, rgba };
   } finally {
-    pix.destroy();
+    pix?.destroy();
+    pg.destroy();
   }
 }
 
@@ -43,11 +46,13 @@ export function copiarArea(doc: mupdf.PDFDocument, pagina: number, retangulo: Re
   const pix = new mupdf.Pixmap(mupdf.ColorSpace.DeviceRGB, caixa, false);
   pix.clear(255);
   const dispositivo = new mupdf.DrawDevice(mupdf.Matrix.identity, pix);
+  const pg = doc.loadPage(pagina);
   try {
-    doc.loadPage(pagina).run(dispositivo, mupdf.Matrix.scale(escala, escala));
+    pg.run(dispositivo, mupdf.Matrix.scale(escala, escala));
     dispositivo.close();
     return new Uint8Array(pix.asPNG());
   } finally {
+    pg.destroy();
     dispositivo.destroy();
     pix.destroy();
   }

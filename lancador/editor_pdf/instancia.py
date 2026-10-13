@@ -8,6 +8,9 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 from .config import CABECALHO_SEGREDO
@@ -15,6 +18,38 @@ from .config import CABECALHO_SEGREDO
 
 def _arquivo(dados: Path) -> Path:
     return dados / "instancia.json"
+
+
+@contextmanager
+def trava_de_inicio(dados: Path, espera: float = 30.0) -> Iterator[None]:
+    """Deixa só um lançador por vez entre a pergunta "tem editor aberto?" e o próprio registro.
+
+    Abrir vários PDFs de uma vez pelo Explorer inicia um lançador por arquivo ao mesmo tempo; sem a trava,
+    todos achariam que não há editor aberto e cada um abriria a sua janela. A trava é um byte travado num
+    arquivo; se o processo morrer, o Windows a solta sozinho. Passada a espera, segue sem ela em vez de
+    deixar o usuário sem editor.
+    """
+    import msvcrt
+
+    arquivo = open(dados / "inicio.lock", "a+b")  # noqa: SIM115 (fechado no finally)
+    travado = False
+    fim = time.monotonic() + espera
+    try:
+        while not travado:
+            try:
+                arquivo.seek(0)
+                msvcrt.locking(arquivo.fileno(), msvcrt.LK_NBLCK, 1)
+                travado = True
+            except OSError:
+                if time.monotonic() > fim:
+                    break
+                time.sleep(0.05)
+        yield
+    finally:
+        if travado:
+            arquivo.seek(0)
+            msvcrt.locking(arquivo.fileno(), msvcrt.LK_UNLCK, 1)
+        arquivo.close()
 
 
 def registrar(dados: Path, porta: int, segredo: str) -> None:

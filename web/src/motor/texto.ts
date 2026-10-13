@@ -13,11 +13,14 @@ function conferirPagina(doc: mupdf.PDFDocument, pagina: number): void {
 /** Texto e retângulos do trecho entre dois pontos da tela, como numa seleção com o mouse. */
 export function selecionarTexto(doc: mupdf.PDFDocument, pagina: number, de: Ponto, ate: Ponto): { quads: Quad[]; texto: string } {
   conferirPagina(doc, pagina);
-  const estrutura = doc.loadPage(pagina).toStructuredText("preserve-whitespace");
+  const pg = doc.loadPage(pagina);
+  let estrutura: mupdf.StructuredText | undefined;
   try {
+    estrutura = pg.toStructuredText("preserve-whitespace");
     return { quads: estrutura.highlight(de, ate, 1000), texto: estrutura.copy(de, ate) };
   } finally {
-    estrutura.destroy();
+    estrutura?.destroy();
+    pg.destroy();
   }
 }
 
@@ -25,5 +28,10 @@ export function selecionarTexto(doc: mupdf.PDFDocument, pagina: number, de: Pont
 export function buscarNaPagina(doc: mupdf.PDFDocument, pagina: number, termo: string): Quad[][] {
   conferirPagina(doc, pagina);
   if (termo.trim() === "") return [];
-  return doc.loadPage(pagina).search(termo, OPCOES_BUSCA);
+  const pg = doc.loadPage(pagina);
+  try {
+    return pg.search(termo, OPCOES_BUSCA);
+  } finally {
+    pg.destroy();
+  }
 }

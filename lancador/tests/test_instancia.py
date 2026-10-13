@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 import os
 import socket
+import subprocess
+import sys
 import time
+from pathlib import Path
 
 from conftest import SEGREDO
 from editor_pdf import instancia
+
+LANCADOR = Path(__file__).resolve().parents[1]
 
 
 def test_encaminha_para_o_editor_aberto(app, servidor, pdf):
@@ -34,6 +39,25 @@ def test_editor_fechando_recusa_para_o_novo_assumir(app, servidor, pdf):
     instancia.registrar(app.dados, servidor.porta, SEGREDO)
     assert instancia.encaminhar_se_aberto(app.dados, [pdf]) is False
     assert app.pendentes.retirar_todos() == []
+
+
+def test_trava_de_inicio_faz_lancadores_simultaneos_entrarem_um_de_cada_vez(tmp_path):
+    # Abrir vários PDFs de uma vez pelo Explorer inicia vários lançadores ao mesmo tempo.
+    codigo = (
+        "import json, sys, time\n"
+        "from pathlib import Path\n"
+        "from editor_pdf import instancia\n"
+        "with instancia.trava_de_inicio(Path(sys.argv[1])):\n"
+        "    entrada = time.time(); time.sleep(0.8); saida = time.time()\n"
+        "print(json.dumps([entrada, saida]))\n"
+    )
+    lancadores = [
+        subprocess.Popen([sys.executable, "-c", codigo, str(tmp_path)], cwd=LANCADOR, stdout=subprocess.PIPE, text=True)
+        for _ in range(3)
+    ]
+    intervalos = sorted(json.loads(p.communicate(timeout=60)[0]) for p in lancadores)
+    for (_, saida_anterior), (entrada_seguinte, _) in zip(intervalos, intervalos[1:]):
+        assert entrada_seguinte >= saida_anterior - 0.02
 
 
 def test_remover(tmp_path):
