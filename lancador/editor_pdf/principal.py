@@ -2,29 +2,16 @@
 
 from __future__ import annotations
 
+import importlib.util
 import secrets
 import threading
-import time
 from pathlib import Path
+from typing import Any
 
 from . import dialogos, instancia, janela
 from .arquivos import limpar_antigos
-from .config import CARENCIA_INICIAL, DIAS_VERSOES, GRACA_RECARGA, RAIZ_WEB, pasta_dados
+from .config import DIAS_VERSOES, RAIZ_WEB, pasta_dados
 from .servidor import Aplicacao, ServidorEditor
-
-
-def deve_encerrar(agora: float, inicio: float, conexoes: int, ja_conectou: bool, ultima_queda: float | None) -> bool:
-    """Decide se o lançador sai, olhando só para a conexão /api/vivo da página.
-
-    O processo do Edge não serve de sinal: ele sai sozinho alguns segundos depois de abrir a janela.
-    Enquanto houver página conectada, o lançador fica. Se nenhuma conectou na carência, a janela não abriu.
-    Se a última caiu e nenhuma voltou dentro da graça (o tempo de uma recarga), a janela fechou.
-    """
-    if conexoes > 0:
-        return False
-    if not ja_conectou:
-        return agora - inicio > CARENCIA_INICIAL
-    return ultima_queda is not None and agora - ultima_queda > GRACA_RECARGA
 
 
 def main(argv: list[str]) -> int:
@@ -32,9 +19,8 @@ def main(argv: list[str]) -> int:
     caminhos = [Path(a) for a in argv[1:] if Path(a).is_file()]
     if instancia.encaminhar_se_aberto(dados, caminhos):
         return 0
-    edge = janela.localizar_edge()
-    if edge is None:
-        dialogos.avisar("O Microsoft Edge não foi encontrado. O editor usa o Edge para abrir a janela.")
+    if importlib.util.find_spec("webview") is None:
+        dialogos.avisar("Falta instalar o pywebview. Rode: python -m pip install -r lancador\\requirements.txt")
         return 1
     if not (RAIZ_WEB / "index.html").is_file():
         dialogos.avisar("O editor ainda não foi compilado. Rode 'npm run build' na pasta web.")
@@ -54,14 +40,15 @@ def main(argv: list[str]) -> int:
     servidor = ServidorEditor(app)
     threading.Thread(target=servidor.serve_forever, daemon=True).start()
     instancia.registrar(dados, servidor.porta, app.segredo)
-    janela.abrir_janela(edge, f"http://127.0.0.1:{servidor.porta}/", dados / "perfil-edge")
+
+    def ao_abrir(aberta: Any) -> None:
+        app.trazer_para_frente = aberta.restore
+        app.definir_titulo = aberta.set_title
+
     try:
-        while not app.encerrar.is_set():
-            time.sleep(1)
-            if deve_encerrar(time.monotonic(), app.inicio, app.conexoes, app.ja_conectou, app.ultima_queda):
-                break
+        janela.abrir_janela(f"http://127.0.0.1:{servidor.porta}/", "Editor PDF", ao_abrir=ao_abrir)
     finally:
-        app.encerrar.set()  # solta a conexão /api/vivo que ainda estiver presa
+        app.encerrar.set()  # a janela fechou: recusa novos arquivos para o próximo lançador assumir
         instancia.remover(dados)
         servidor.shutdown()
         servidor.server_close()

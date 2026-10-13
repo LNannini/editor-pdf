@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from editor_pdf import dialogos, janela
@@ -9,13 +10,32 @@ from editor_pdf import dialogos, janela
 LANCADOR = Path(__file__).resolve().parents[1]
 
 
-def test_comando_da_janela_sem_barra_e_com_perfil_proprio(tmp_path):
-    edge = Path(r"C:\Edge\msedge.exe")
-    comando = janela.comando_janela(edge, "http://127.0.0.1:5000/", tmp_path / "perfil")
-    assert comando[0] == str(edge)
-    assert "--app=http://127.0.0.1:5000/" in comando
-    assert f"--user-data-dir={tmp_path / 'perfil'}" in comando
-    assert "--no-first-run" in comando
+def test_janela_propria_carrega_o_editor_com_o_segredo_e_devolve_o_controle_ao_fechar(servidor, web):
+    # A janela abre oculta: nada aparece na tela durante o teste.
+    (web / "index.html").write_text(
+        "<html><head><title>carregando</title></head><body><script>"
+        "const segredo = document.querySelector('meta[name=editor-segredo]').content;"
+        "fetch('/api/pendentes', { headers: { 'X-Editor-Segredo': segredo } })"
+        ".then((r) => r.json()).then((lista) => { document.title = 'ok ' + lista.length; });"
+        "</script></body></html>",
+        encoding="utf-8",
+    )
+    titulos = []
+
+    def ao_abrir(aberta):
+        fim = time.monotonic() + 20
+        while time.monotonic() < fim:
+            titulo = aberta.evaluate_js("document.title") or ""
+            if titulo.startswith("ok"):
+                titulos.append(titulo)
+                break
+            time.sleep(0.2)
+        aberta.destroy()
+
+    inicio = time.monotonic()
+    janela.abrir_janela(f"http://127.0.0.1:{servidor.porta}/", "Editor PDF", ao_abrir=ao_abrir, oculta=True)
+    assert titulos == ["ok 0"]
+    assert time.monotonic() - inicio < 25
 
 
 def test_localiza_o_edge_pelas_pastas_do_windows(tmp_path, monkeypatch):

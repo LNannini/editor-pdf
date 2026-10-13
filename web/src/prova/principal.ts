@@ -59,6 +59,7 @@ async function abrir(arquivo: ArquivoAberto): Promise<void> {
   if (atual) await motor.pedir({ tipo: "fechar", doc: atual.doc });
   atual = { doc, arquivo };
   document.title = `Editor PDF: ${arquivo.nome}`;
+  plataforma.definirTitulo(document.title).catch(() => undefined);
   montarPaginas(info.tamanhos);
   estado.textContent = `${arquivo.nome}, ${info.paginas} páginas${info.reparado ? " (estava danificado e foi reparado)" : ""}`;
 }
@@ -97,9 +98,5 @@ async function buscarPendentes(): Promise<void> {
   if (novos[0]) await abrir(novos[0]);
 }
 
-plataforma
-  .manterVivo()
-  .catch(() => undefined)
-  .then(() => (estado.textContent = "O lançador foi encerrado. Feche esta janela e abra o editor de novo."));
 buscarPendentes().catch(mostrarErro);
 setInterval(() => buscarPendentes().catch(mostrarErro), 2000);

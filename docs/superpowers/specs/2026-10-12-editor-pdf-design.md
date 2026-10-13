@@ -40,7 +40,9 @@ O editor é um programa web em TypeScript, construído com Vite, com a interface
 
 Todo o trabalho com PDF passa pelo MuPDF.js (pacote npm `mupdf`, versão 1.28.1 nesta data, licença AGPL-3.0), que roda num Web Worker para a tela não travar enquanto ele desenha páginas de um processo grande. O mesmo motor mostra e grava, então o que aparece na tela é o que vai para o arquivo. A interface conversa com o motor só por mensagens de tipo definido e nunca mexe no PDF diretamente.
 
-No PC, um lançador em Python 3.13 cuida do que o navegador não alcança. Ele serve o editor em 127.0.0.1, abre uma janela do Edge sem barra de endereço (`msedge --app=...`), lê e grava arquivos no disco, guarda backups e rascunhos, faz a assinatura com o certificado A3 e registra o editor no "Abrir com" do Explorer. O servidor HTTP é o da biblioteca padrão do Python, sem dependência extra. Se o lançador for chamado com o editor já aberto, ele entrega o arquivo à instância que está rodando, que abre uma aba nova, e encerra.
+No PC, um lançador em Python 3.13 cuida do que o navegador não alcança. Ele serve o editor em 127.0.0.1, abre o editor numa janela própria chamada "Editor PDF", lê e grava arquivos no disco, guarda backups e rascunhos, faz a assinatura com o certificado A3 e registra o editor no "Abrir com" do Explorer. A janela usa o WebView2, o componente com que o Windows mostra conteúdo web dentro de programas (o mesmo motor do Edge), por meio do pywebview; ela pertence ao lançador, mostra o nome do arquivo no título, e quando fecha o lançador encerra. O servidor HTTP é o da biblioteca padrão do Python; a janela depende do pywebview e do pythonnet, com versões fixadas em `lancador/requirements.txt`. Se o lançador for chamado com o editor já aberto, ele entrega o arquivo à instância que está rodando, que traz a janela de volta e abre o arquivo numa aba nova, e encerra.
+
+A primeira versão abria a janela do Edge com `msedge --app=...`. Ela foi trocada em 13/10/2026 porque o processo iniciado assim sai sozinho alguns segundos depois e entrega a janela a outro processo, de modo que o lançador não tinha como saber quando a janela fechava.
 
 O registro no "Abrir com" e o atalho na área de trabalho são feitos por um script de instalação que grava só em `HKEY_CURRENT_USER`, sem pedir administrador, e um script de desinstalação desfaz tudo. O leitor de PDF padrão do Windows não muda.
 
@@ -55,11 +57,11 @@ No Android, o mesmo programa fica publicado num endereço HTTPS e é instalado p
 | `digitalizador` | Câmera, detecção da folha, endireitamento, limpeza, compressão e montagem das páginas | OpenCV.js, `motor` |
 | `ocr` | Reconhece o texto de uma imagem e devolve as palavras com posição. Quem grava a camada invisível no PDF é o `motor` | Tesseract.js com dados `por` |
 | `plataforma` | Abrir, salvar, rascunhos, recentes, compartilhar e cadastro da imagem de assinatura. Tem duas implementações, PC e Android | lançador (PC); APIs do navegador e IndexedDB (Android) |
-| `lancador` | Servidor local, janela do Edge, disco, backup, rascunhos, assinatura A3, "Abrir com" | biblioteca padrão do Python, pyHanko, python-pkcs11, driver SafeSign (`aetpkss1.dll`) |
+| `lancador` | Servidor local, janela própria, disco, backup, rascunhos, assinatura A3, "Abrir com" | biblioteca padrão do Python, pywebview com WebView2, pyHanko, python-pkcs11, driver SafeSign (`aetpkss1.dll`) |
 
 O resto do código não sabe em que plataforma está rodando. Ele consulta só uma lista de capacidades (abas, câmera, assinatura A3) que a `plataforma` informa.
 
-Os rascunhos no PC ficam com o lançador, em disco, e não no IndexedDB do Edge. O lançador sobe em porta aleatória, e o IndexedDB é separado por endereço, o que faria os rascunhos sumirem a cada abertura.
+Os rascunhos no PC ficam com o lançador, em disco, e não no IndexedDB da janela. O lançador sobe em porta aleatória, e o IndexedDB é separado por endereço, o que faria os rascunhos sumirem a cada abertura.
 
 ### Pastas
 

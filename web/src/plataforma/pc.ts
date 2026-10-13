@@ -122,20 +122,8 @@ export class PlataformaPc implements Plataforma {
     await this.chamar("PUT", "/api/assinatura-imagem", { corpo: png });
   }
 
-  /**
-   * Abre a conexão /api/vivo e a mantém aberta lendo o que chegar. Fechar a janela derruba a conexão,
-   * e é assim que o lançador sabe que pode sair. Minimizar não derruba, ao contrário de um sinal por timer.
-   */
-  async manterVivo(): Promise<void> {
-    const resposta = await this.chamar("GET", "/api/vivo");
-    const leitor = resposta!.body?.getReader();
-    if (!leitor) return;
-    try {
-      while (!(await leitor.read()).done) {
-        // nada a fazer com os bytes; eles só mantêm a conexão viva
-      }
-    } catch {
-      // conexão derrubada: o lançador saiu
-    }
+  /** A janela do PC é do lançador; o título da página não aparece nela, então o lançador recebe e aplica. */
+  async definirTitulo(titulo: string): Promise<void> {
+    await this.chamar("POST", "/api/titulo", { corpo: new TextEncoder().encode(titulo) });
   }
 }

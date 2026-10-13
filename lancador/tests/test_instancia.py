@@ -29,12 +29,11 @@ def test_registro_velho_de_porta_fechada_nao_encaminha(tmp_path):
     assert time.monotonic() - inicio < 3
 
 
-def test_editor_sem_janela_recusa_e_se_encerra(app, servidor, pdf):
-    app.ja_conectou = True
-    app.ultima_queda = time.monotonic() - 100
+def test_editor_fechando_recusa_para_o_novo_assumir(app, servidor, pdf):
+    app.encerrar.set()  # a janela fechou e o lançador antigo está saindo
     instancia.registrar(app.dados, servidor.porta, SEGREDO)
     assert instancia.encaminhar_se_aberto(app.dados, [pdf]) is False
-    assert app.encerrar.is_set()
+    assert app.pendentes.retirar_todos() == []
 
 
 def test_remover(tmp_path):

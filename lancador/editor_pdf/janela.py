@@ -1,10 +1,31 @@
-"""Abre o editor numa janela do Edge sem barra de endereço e entrega PDFs ao Edge para imprimir."""
+"""A janela do editor e a entrega de PDFs ao Edge para imprimir.
+
+A janela é do próprio lançador, com o WebView2 do Windows por meio do pywebview: chama-se "Editor PDF",
+não usa perfil do Edge, e abrir_janela só retorna quando ela fecha.
+"""
 
 from __future__ import annotations
 
 import os
 import subprocess
 from pathlib import Path
+from typing import Any, Callable
+
+
+def abrir_janela(
+    url: str,
+    titulo: str,
+    ao_abrir: Callable[[Any], None] | None = None,
+    oculta: bool = False,
+) -> None:
+    """Abre a janela e bloqueia até ela fechar. ao_abrir recebe a janela, numa thread à parte, logo que ela existe."""
+    import webview  # importado aqui para o resto do lançador funcionar mesmo antes de instalar o pywebview
+
+    janela = webview.create_window(titulo, url, width=1200, height=900, min_size=(600, 400), text_select=True, hidden=oculta)
+    if ao_abrir is None:
+        webview.start()
+    else:
+        webview.start(ao_abrir, janela)
 
 
 def localizar_edge() -> Path | None:
@@ -14,25 +35,6 @@ def localizar_edge() -> Path | None:
         Path(os.environ.get("LOCALAPPDATA", "")) / "Microsoft" / "Edge" / "Application" / "msedge.exe",
     ]
     return next((c for c in candidatos if c.is_file()), None)
-
-
-def comando_janela(edge: Path, url: str, perfil: Path) -> list[str]:
-    # Perfil próprio: a janela não se mistura com o Edge do dia a dia. O processo iniciado aqui sai sozinho
-    # alguns segundos depois e entrega a janela a outro; quem diz se ela continua aberta é a conexão /api/vivo.
-    return [
-        str(edge),
-        f"--app={url}",
-        f"--user-data-dir={perfil}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-background-mode",
-        "--disable-features=Translate",
-    ]
-
-
-def abrir_janela(edge: Path, url: str, perfil: Path) -> subprocess.Popen:
-    perfil.mkdir(parents=True, exist_ok=True)
-    return subprocess.Popen(comando_janela(edge, url, perfil))
 
 
 def comando_imprimir(edge: Path, pdf: Path) -> list[str]:

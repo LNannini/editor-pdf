@@ -6,12 +6,13 @@ interface Chamada {
   url: string;
   metodo: string;
   cabecalhos: Record<string, string>;
+  corpo: unknown;
 }
 
 function fetchFalso(respostas: Record<string, Response | (() => Response)>) {
   const chamadas: Chamada[] = [];
   const buscar = (async (url: string, init: RequestInit = {}) => {
-    chamadas.push({ url, metodo: init.method ?? "GET", cabecalhos: (init.headers ?? {}) as Record<string, string> });
+    chamadas.push({ url, metodo: init.method ?? "GET", cabecalhos: (init.headers ?? {}) as Record<string, string>, corpo: init.body });
     const chave = `${init.method ?? "GET"} ${url}`;
     const resposta = respostas[chave];
     if (!resposta) return new Response("sem rota", { status: 404 });
@@ -32,23 +33,11 @@ describe("PlataformaPc", () => {
     expect(chamadas.every((c) => c.cabecalhos["X-Editor-Segredo"] === "s3gr3do")).toBe(true);
   });
 
-  it("manterVivo segura a conexão e só termina quando o lançador a fecha", async () => {
-    let fechar: () => void = () => undefined;
-    const corpo = new ReadableStream<Uint8Array>({
-      start(controle) {
-        controle.enqueue(new Uint8Array([46]));
-        fechar = () => controle.close();
-      },
-    });
-    const { buscar, chamadas } = fetchFalso({ "GET /api/vivo": new Response(corpo) });
-    let terminou = false;
-    const vivo = new PlataformaPc("s", buscar).manterVivo().then(() => (terminou = true));
-    await new Promise((r) => setTimeout(r, 50));
-    expect(terminou).toBe(false);
+  it("definirTitulo manda o título ao lançador, que o põe na janela", async () => {
+    const { buscar, chamadas } = fetchFalso({ "POST /api/titulo": new Response(null, { status: 204 }) });
+    await new PlataformaPc("s", buscar).definirTitulo("Editor PDF: Petição (cópia).pdf");
     expect(chamadas[0].cabecalhos["X-Editor-Segredo"]).toBe("s");
-    fechar();
-    await vivo;
-    expect(terminou).toBe(true);
+    expect(new TextDecoder().decode(chamadas[0].corpo as Uint8Array)).toBe("Editor PDF: Petição (cópia).pdf");
   });
 
   it("lê bytes de um arquivo pelo id, codificando o id", async () => {

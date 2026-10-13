@@ -10,7 +10,7 @@ import json
 import os
 from pathlib import Path
 
-from .config import CABECALHO_SEGREDO, GRACA_RECARGA
+from .config import CABECALHO_SEGREDO
 
 
 def _arquivo(dados: Path) -> Path:
@@ -32,8 +32,7 @@ def remover(dados: Path) -> None:
         _arquivo(dados).unlink(missing_ok=True)
 
 
-def encaminhar_se_aberto(dados: Path, caminhos: list[Path], espera: float = GRACA_RECARGA + 3.0) -> bool:
-    # A espera cobre a graça de recarga, durante a qual o editor aberto decide se a página volta.
+def encaminhar_se_aberto(dados: Path, caminhos: list[Path], espera: float = 5.0) -> bool:
     try:
         info = json.loads(_arquivo(dados).read_text(encoding="utf-8"))
         porta, segredo = int(info["porta"]), str(info["segredo"])

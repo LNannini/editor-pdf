@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import socket
 import struct
-import threading
 import time
 
 from conftest import SEGREDO
@@ -74,60 +73,33 @@ def test_abrir_externo_aceita_so_arquivos_que_existem(chamar, app, pdf, tmp_path
     assert app.pendentes.retirar_todos() == [pdf]
 
 
-def test_abrir_externo_sem_janela_pede_encerramento(chamar, app, pdf):
-    app.ja_conectou = True  # a página já esteve aberta e fechou há muito tempo
-    app.ultima_queda = time.monotonic() - 100
-    corpo = json.dumps({"caminhos": [str(pdf)]}).encode("utf-8")
-    assert chamar("POST", "/api/abrir-externo", corpo)[0] == 410
-    assert app.encerrar.is_set()
-
-
-def test_abrir_externo_durante_recarga_espera_a_pagina_voltar(chamar, app, pdf):
-    app.ja_conectou = True
-    app.ultima_queda = time.monotonic()  # a conexão acabou de cair: pode ser F5
-    app.graca_recarga = 2.0
-    threading.Timer(0.3, app.conexao_aberta).start()  # a página recarregada volta a conectar
+def test_abrir_externo_com_a_janela_aberta_traz_a_janela_de_volta(chamar, app, pdf):
+    chamadas = []
+    app.trazer_para_frente = lambda: chamadas.append(True)
     corpo = json.dumps({"caminhos": [str(pdf)]}).encode("utf-8")
     assert chamar("POST", "/api/abrir-externo", corpo)[0] == 204
-    assert not app.encerrar.is_set()
+    assert chamadas == [True]
     assert app.pendentes.retirar_todos() == [pdf]
 
 
-def test_abrir_externo_logo_depois_de_fechar_recusa_para_o_novo_assumir(chamar, app, pdf):
-    app.ja_conectou = True
-    app.ultima_queda = time.monotonic()  # a janela acabou de fechar e não volta
-    app.graca_recarga = 0.3
+def test_abrir_externo_com_o_editor_fechando_recusa_para_o_novo_assumir(chamar, app, pdf):
+    app.encerrar.set()  # a janela fechou e este lançador está saindo
     corpo = json.dumps({"caminhos": [str(pdf)]}).encode("utf-8")
     assert chamar("POST", "/api/abrir-externo", corpo)[0] == 410
-    assert app.encerrar.is_set()
     assert app.pendentes.retirar_todos() == []
+
+
+def test_titulo_da_janela_acompanha_o_arquivo(chamar, app):
+    titulos = []
+    app.definir_titulo = titulos.append
+    assert chamar("POST", "/api/titulo", "Editor PDF: Petição (cópia).pdf".encode("utf-8"))[0] == 204
+    assert titulos == ["Editor PDF: Petição (cópia).pdf"]
 
 
 def test_respostas_proibem_o_editor_dentro_de_moldura_de_outro_site(chamar):
     _, cabecalhos, _ = chamar("GET", "/", segredo=None)
     assert cabecalhos["x-frame-options"] == "DENY"
     assert "frame-ancestors 'none'" in cabecalhos["content-security-policy"]
-
-
-def _aguardar(condicao, segundos=3.0) -> bool:
-    fim = time.monotonic() + segundos
-    while time.monotonic() < fim:
-        if condicao():
-            return True
-        time.sleep(0.05)
-    return condicao()
-
-
-def test_conexao_vivo_conta_a_pagina_aberta_e_percebe_o_fechamento(servidor, app):
-    conexao = socket.create_connection(("127.0.0.1", servidor.porta))
-    pedido = f"GET /api/vivo HTTP/1.1\r\nHost: 127.0.0.1:{servidor.porta}\r\nX-Editor-Segredo: {SEGREDO}\r\n\r\n"
-    conexao.sendall(pedido.encode("ascii"))
-    assert conexao.recv(1024).startswith(b"HTTP/1.1 200")
-    assert _aguardar(lambda: app.conexoes == 1)
-    assert app.ja_conectou is True
-    conexao.close()
-    assert _aguardar(lambda: app.conexoes == 0)
-    assert app.ultima_queda is not None
 
 
 def test_conexao_resetada_pelo_cliente_nao_suja_o_console(servidor, capsys):

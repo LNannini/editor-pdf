@@ -37,8 +37,8 @@ export interface Plataforma {
   apagarRascunho(chave: string): Promise<void>;
   imagemAssinatura(): Promise<Bytes | null>;
   guardarImagemAssinatura(png: Bytes): Promise<void>;
-  /** Mantém a ligação com o hospedeiro enquanto a página existe. A promessa termina quando a ligação acaba. */
-  manterVivo(): Promise<void>;
+  /** Põe o título na janela do programa (no PC, a janela do lançador; no Android, a aba). */
+  definirTitulo(titulo: string): Promise<void>;
 }
 
 export class ErroArquivoEmUso extends Error {

@@ -9,7 +9,6 @@ from __future__ import annotations
 import hmac
 import json
 import re
-import select
 import sys
 import threading
 import time
@@ -22,7 +21,7 @@ from urllib.parse import unquote, urlsplit
 from datetime import datetime
 
 from .arquivos import ArquivoEmUso, caminho_livre, nome_seguro, salvar_atomico
-from .config import CABECALHO_SEGREDO, CARENCIA_INICIAL, GRACA_RECARGA
+from .config import CABECALHO_SEGREDO
 from .estado import FilaPendentes, Recentes, RegistroArquivos
 
 # Tipos fixos: no Windows o módulo mimetypes lê o registro e às vezes devolve text/plain para .js.
@@ -55,51 +54,18 @@ class Aplicacao:
     pastas: RegistroArquivos = field(default_factory=RegistroArquivos)
     pendentes: FilaPendentes = field(default_factory=FilaPendentes)
     recentes: Recentes = field(init=False)
-    inicio: float = field(default_factory=time.monotonic)
-    # Sinal de vida: a página mantém uma conexão aberta em /api/vivo. O processo do Edge não serve para isso,
-    # porque sai sozinho alguns segundos depois de abrir a janela e a entrega a outro processo.
-    conexoes: int = 0
-    ja_conectou: bool = False
-    ultima_queda: float | None = None
-    graca_recarga: float = GRACA_RECARGA
+    # Ligam o servidor à janela: trazem a janela de volta quando chega arquivo pelo "Abrir com" e põem o nome
+    # do arquivo no título. O ponto de entrada os troca pelos métodos da janela de verdade quando ela abre.
+    trazer_para_frente: Callable[[], None] = field(default=lambda: None)
+    definir_titulo: Callable[[str], None] = field(default=lambda titulo: None)
+    # Ligado quando a janela fecha: daí em diante este lançador está saindo e recusa novos arquivos.
     encerrar: threading.Event = field(default_factory=threading.Event)
-    _trava: threading.Lock = field(default_factory=threading.Lock)
 
     def __post_init__(self) -> None:
         self.recentes = Recentes(self.dados / "recentes.json")
 
     def descrever(self, caminho: Path) -> dict[str, str]:
         return {"id": self.registro.registrar(caminho), "nome": caminho.name, "pasta": str(caminho.parent)}
-
-    def conexao_aberta(self) -> None:
-        with self._trava:
-            self.conexoes += 1
-            self.ja_conectou = True
-
-    def conexao_fechada(self) -> None:
-        with self._trava:
-            self.conexoes -= 1
-            if self.conexoes == 0:
-                self.ultima_queda = time.monotonic()
-
-    def janela_disponivel(self) -> bool:
-        """Diz se há página para receber arquivos.
-
-        Com página conectada, sim. Se nenhuma conectou ainda, sim enquanto durar a carência (a janela está abrindo).
-        Se a conexão acabou de cair, espera a graça de recarga: a página recarregada volta e recebe o arquivo; se não
-        voltar, a janela fechou e a resposta é não, para o lançador novo assumir em vez de o arquivo se perder.
-        """
-        while True:
-            agora = time.monotonic()
-            with self._trava:
-                if self.conexoes > 0:
-                    return True
-                if not self.ja_conectou:
-                    return agora - self.inicio <= CARENCIA_INICIAL
-                fim_da_graca = (self.ultima_queda if self.ultima_queda is not None else agora) + self.graca_recarga
-            if agora >= fim_da_graca:
-                return False
-            time.sleep(0.05)
 
 
 class ServidorEditor(ThreadingHTTPServer):
@@ -114,7 +80,7 @@ class ServidorEditor(ThreadingHTTPServer):
         return int(self.server_address[1])
 
     def handle_error(self, request: object, client_address: object) -> None:
-        # O Edge abre conexões por antecipação e as derruba sem usar; isso não é erro do editor.
+        # O navegador abre conexões por antecipação e as derruba sem usar; isso não é erro do editor.
         if isinstance(sys.exc_info()[1], (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
             return
         super().handle_error(request, client_address)
@@ -256,38 +222,19 @@ class Manipulador(BaseHTTPRequestHandler):
 
     def _api_abrir_externo(self) -> None:
         app = self.server.app
-        if not app.janela_disponivel():
-            # Não há janela para mostrar o arquivo; este lançador sai e o novo, que chamou, assume.
-            app.encerrar.set()
+        if app.encerrar.is_set():
+            # A janela já fechou e este lançador está saindo; o lançador novo, que chamou, assume.
             self._texto(HTTPStatus.GONE, "Sem janela aberta.")
             return
         pedido = json.loads(self._corpo() or b"{}")
         app.pendentes.adicionar([Path(c) for c in pedido.get("caminhos", []) if Path(c).is_file()])
+        app.trazer_para_frente()
         self._vazio()
 
-    def _api_vivo(self) -> None:
-        """Conexão que a página mantém aberta enquanto a janela existe. Quando ela cai, a janela fechou ou recarregou."""
-        app = self.server.app
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "application/octet-stream")
-        self.send_header("Cache-Control", "no-store")
-        self.send_header("Connection", "close")
-        self.end_headers()
-        self.close_connection = True
-        app.conexao_aberta()
-        try:
-            ultimo_envio = time.monotonic()
-            while not app.encerrar.is_set():
-                legivel, _, _ = select.select([self.connection], [], [], 1.0)
-                if legivel and not self.connection.recv(1024):
-                    break  # a página fechou a conexão
-                if time.monotonic() - ultimo_envio > 30:
-                    self.wfile.write(b".")
-                    ultimo_envio = time.monotonic()
-        except OSError:
-            pass
-        finally:
-            app.conexao_fechada()
+    def _api_titulo(self) -> None:
+        titulo = self._corpo().decode("utf-8", errors="replace").strip()[:300]
+        self.server.app.definir_titulo(titulo or "Editor PDF")
+        self._vazio()
 
     def _api_dialogo_abrir(self) -> None:
         app = self.server.app
@@ -419,7 +366,7 @@ ROTAS: list[tuple[str, re.Pattern[str], str]] = [
     for metodo, padrao, nome in [
         ("GET", r"/api/pendentes", "_api_pendentes"),
         ("POST", r"/api/abrir-externo", "_api_abrir_externo"),
-        ("GET", r"/api/vivo", "_api_vivo"),
+        ("POST", r"/api/titulo", "_api_titulo"),
         ("POST", r"/api/dialogo/abrir", "_api_dialogo_abrir"),
         ("GET", r"/api/arquivo/([^/]+)", "_api_ler_arquivo"),
         ("PUT", r"/api/arquivo/([^/]+)", "_api_salvar_arquivo"),
