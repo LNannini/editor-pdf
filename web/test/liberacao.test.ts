@@ -90,4 +90,24 @@ describe("o motor libera as imagens que lê", () => {
     expect(gravadas.length).toBe(1);
     expect(presas(gravadas)).toBe(0);
   });
+
+  it("ao gravar a assinatura por imagem", () => {
+    const doc = abrirDocumento(fabricarPdf({ paginas: 1 }));
+    const gravadas = vigiarImagens(doc);
+    inserirImagemNoConteudo(doc, 0, pngPreto(), [100, 100, 200, 150]);
+    expect(gravadas.length).toBe(1);
+    expect(presas(gravadas)).toBe(0);
+  });
+
+  it("também quando a assinatura falha no meio", () => {
+    const doc = abrirDocumento(fabricarPdf({ paginas: 1 }));
+    const gravadas = vigiarImagens(doc);
+    // os fluxos de conteúdo são gravados depois de addImage, com a imagem já criada e gravada no documento
+    doc.addStream = () => {
+      throw new Error("falha simulada");
+    };
+    expect(() => inserirImagemNoConteudo(doc, 0, pngPreto(), [100, 100, 200, 150])).toThrow("falha simulada");
+    expect(gravadas.length).toBe(1);
+    expect(presas(gravadas)).toBe(0);
+  });
 });

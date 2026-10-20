@@ -36,34 +36,39 @@ export function inserirImagemNoConteudo(
   } catch {
     throw new ErroDocumento("A imagem da assinatura não pôde ser lida. Use PNG ou JPG.");
   }
-  operacao(doc, "Inserir assinatura", () => {
-    const objeto = doc.findPage(pagina);
-    const ref = doc.addImage(imagem);
-    // Recursos próprios desta página: se vinham herdados do nó pai ou eram compartilhados, as outras páginas não mudam.
-    const origem = objeto.getInheritable("Resources");
-    const recursos = doc.newDictionary();
-    if (origem.isDictionary()) origem.forEach((valor, chave) => recursos.put(chave, valor));
-    const xobjOrigem = recursos.get("XObject");
-    const xobj = doc.newDictionary();
-    if (xobjOrigem.isDictionary()) xobjOrigem.forEach((valor, chave) => xobj.put(chave, valor));
-    let n = 1;
-    while (!xobj.get(`EdAss${n}`).isNull()) n++;
-    const nome = `EdAss${n}`;
-    xobj.put(nome, ref);
-    recursos.put("XObject", xobj);
-    objeto.put("Resources", recursos);
-    // Leva o quadrado unitário da imagem ao retângulo da tela e daí ao espaço do PDF, que tem o eixo y para cima.
-    const matriz = mupdf.Matrix.concat([x1 - x0, 0, 0, -(y1 - y0), x0, y1], mupdf.Matrix.invert(transformacao));
-    const cm = matriz.map((v) => String(Number(v.toFixed(4)))).join(" ");
-    // O conteúdo original fica entre q e Q para que um estado gráfico deixado aberto por ele não desloque a assinatura.
-    const antes = doc.addStream("q\n", {});
-    const depois = doc.addStream(`\nQ\nq ${cm} cm /${nome} Do Q\n`, {});
-    const atual = objeto.get("Contents");
-    const lista = doc.newArray();
-    lista.push(antes);
-    if (atual.isArray()) atual.forEach((v) => lista.push(v));
-    else if (!atual.isNull()) lista.push(atual);
-    lista.push(depois);
-    objeto.put("Contents", lista);
-  });
+  // Depois de addImage o PDF guarda a própria cópia da imagem; o objeto do MuPDF é liberado mesmo se a operação falhar.
+  try {
+    operacao(doc, "Inserir assinatura", () => {
+      const objeto = doc.findPage(pagina);
+      const ref = doc.addImage(imagem);
+      // Recursos próprios desta página: se vinham herdados do nó pai ou eram compartilhados, as outras páginas não mudam.
+      const origem = objeto.getInheritable("Resources");
+      const recursos = doc.newDictionary();
+      if (origem.isDictionary()) origem.forEach((valor, chave) => recursos.put(chave, valor));
+      const xobjOrigem = recursos.get("XObject");
+      const xobj = doc.newDictionary();
+      if (xobjOrigem.isDictionary()) xobjOrigem.forEach((valor, chave) => xobj.put(chave, valor));
+      let n = 1;
+      while (!xobj.get(`EdAss${n}`).isNull()) n++;
+      const nome = `EdAss${n}`;
+      xobj.put(nome, ref);
+      recursos.put("XObject", xobj);
+      objeto.put("Resources", recursos);
+      // Leva o quadrado unitário da imagem ao retângulo da tela e daí ao espaço do PDF, que tem o eixo y para cima.
+      const matriz = mupdf.Matrix.concat([x1 - x0, 0, 0, -(y1 - y0), x0, y1], mupdf.Matrix.invert(transformacao));
+      const cm = matriz.map((v) => String(Number(v.toFixed(4)))).join(" ");
+      // O conteúdo original fica entre q e Q para que um estado gráfico deixado aberto por ele não desloque a assinatura.
+      const antes = doc.addStream("q\n", {});
+      const depois = doc.addStream(`\nQ\nq ${cm} cm /${nome} Do Q\n`, {});
+      const atual = objeto.get("Contents");
+      const lista = doc.newArray();
+      lista.push(antes);
+      if (atual.isArray()) atual.forEach((v) => lista.push(v));
+      else if (!atual.isNull()) lista.push(atual);
+      lista.push(depois);
+      objeto.put("Contents", lista);
+    });
+  } finally {
+    imagem.destroy();
+  }
 }
