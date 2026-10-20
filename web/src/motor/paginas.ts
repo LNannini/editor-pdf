@@ -104,19 +104,24 @@ export function inserirImagemComoPagina(doc: mupdf.PDFDocument, posicao: number,
   } catch {
     throw new ErroDocumento("A imagem não pôde ser lida. Use um arquivo JPG ou PNG.");
   }
-  const largura = imagem.getWidth();
-  const altura = imagem.getHeight();
-  const escala =
-    altura >= largura
-      ? Math.min(A4_CURTO / largura, A4_LONGO / altura)
-      : Math.min(A4_LONGO / largura, A4_CURTO / altura);
-  const w = largura * escala;
-  const h = altura * escala;
-  operacao(doc, "Inserir imagem como página", () => {
-    const ref = doc.addImage(imagem);
-    const pagina = doc.addPage([0, 0, w, h], 0, { XObject: { Im0: ref } }, `q ${numero(w)} 0 0 ${numero(h)} 0 0 cm /Im0 Do Q`);
-    doc.insertPage(destino, pagina);
-  });
+  // Depois de addImage o PDF guarda a própria cópia da imagem; o objeto do MuPDF é liberado mesmo se a operação falhar.
+  try {
+    const largura = imagem.getWidth();
+    const altura = imagem.getHeight();
+    const escala =
+      altura >= largura
+        ? Math.min(A4_CURTO / largura, A4_LONGO / altura)
+        : Math.min(A4_LONGO / largura, A4_CURTO / altura);
+    const w = largura * escala;
+    const h = altura * escala;
+    operacao(doc, "Inserir imagem como página", () => {
+      const ref = doc.addImage(imagem);
+      const pagina = doc.addPage([0, 0, w, h], 0, { XObject: { Im0: ref } }, `q ${numero(w)} 0 0 ${numero(h)} 0 0 cm /Im0 Do Q`);
+      doc.insertPage(destino, pagina);
+    });
+  } finally {
+    imagem.destroy();
+  }
 }
 
 /**

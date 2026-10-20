@@ -2,7 +2,7 @@ import type * as mupdf from "mupdf";
 import { describe, expect, it } from "vitest";
 import { inserirImagemNoConteudo } from "../src/motor/assinatura-imagem";
 import { abrirDocumento } from "../src/motor/documento";
-import { cortarMargens, girarPaginas } from "../src/motor/paginas";
+import { cortarMargens, girarPaginas, inserirImagemComoPagina } from "../src/motor/paginas";
 import { buscarNaPagina, selecionarTexto } from "../src/motor/texto";
 import { copiarArea, renderizarPagina } from "../src/motor/visual";
 import { fabricarPdf, pngPreto } from "./fabrica";
@@ -19,8 +19,19 @@ function vigiarPaginas(doc: mupdf.PDFDocument): mupdf.PDFPage[] {
   return carregadas;
 }
 
-/** Userdata.destroy() zera o ponteiro; página com ponteiro diferente de zero continua presa na memória do WebAssembly. */
-const presas = (paginas: mupdf.PDFPage[]) => paginas.filter((p) => p.pointer !== 0).length;
+/** Anota cada imagem que o motor grava neste documento, para conferir depois se ela foi liberada. */
+function vigiarImagens(doc: mupdf.PDFDocument): mupdf.Image[] {
+  const gravadas: mupdf.Image[] = [];
+  const original = doc.addImage.bind(doc);
+  doc.addImage = (imagem: mupdf.Image) => {
+    gravadas.push(imagem);
+    return original(imagem);
+  };
+  return gravadas;
+}
+
+/** Userdata.destroy() zera o ponteiro; objeto com ponteiro diferente de zero continua preso na memória do WebAssembly. */
+const presas = (objetos: Array<mupdf.PDFPage | mupdf.Image>) => objetos.filter((o) => o.pointer !== 0).length;
 
 describe("o motor libera as páginas que carrega", () => {
   it("ao desenhar e ao copiar área", () => {
@@ -56,5 +67,27 @@ describe("o motor libera as páginas que carrega", () => {
     expect(() => cortarMargens(doc, [0, 1], [0, 830, 595, 842])).toThrow();
     expect(carregadas.length).toBe(2);
     expect(presas(carregadas)).toBe(0);
+  });
+});
+
+describe("o motor libera as imagens que lê", () => {
+  it("ao inserir foto como página", () => {
+    const doc = abrirDocumento(fabricarPdf({ paginas: 1 }));
+    const gravadas = vigiarImagens(doc);
+    inserirImagemComoPagina(doc, 1, pngPreto());
+    expect(gravadas.length).toBe(1);
+    expect(presas(gravadas)).toBe(0);
+  });
+
+  it("também quando a inserção falha no meio", () => {
+    const doc = abrirDocumento(fabricarPdf({ paginas: 1 }));
+    const gravadas = vigiarImagens(doc);
+    // a falha vem depois de addImage, com a imagem já criada e gravada no documento
+    doc.insertPage = () => {
+      throw new Error("falha simulada");
+    };
+    expect(() => inserirImagemComoPagina(doc, 1, pngPreto())).toThrow("falha simulada");
+    expect(gravadas.length).toBe(1);
+    expect(presas(gravadas)).toBe(0);
   });
 });
